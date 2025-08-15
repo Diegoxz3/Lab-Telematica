@@ -1,0 +1,15 @@
+; Zona DNS para lab.local
+$TTL    604800
+@       IN      SOA     dns.lab.local. root.lab.local. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      dns.lab.local.
+@       IN      A       172.20.0.2
+dns     IN      A       172.20.0.2
+dhcp    IN      A       172.20.0.3
+flask   IN      A       172.20.0.5
+nginx   IN      A       172.20.0.6

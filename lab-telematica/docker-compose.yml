@@ -1,0 +1,128 @@
+# Definición de la red personalizada
+# Usa una red bridge con subred 172.20.0.0/16 para control de IPs
+networks:
+  lab-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Definición de volúmenes nombrados para datos persistentes
+volumes:
+  dhcp-data:  # Para datos persistentes del servidor DHCP
+  dns-data:   # Para datos persistentes del servidor DNS
+
+# Servicios que componen el entorno
+services:
+  # Servidor DNS para resolución de nombres
+  dns:
+    image: ubuntu/bind9:latest
+    container_name: dns
+    networks:
+      lab-net:
+        ipv4_address: 172.20.0.2
+    volumes:
+      - ./dns/named.conf.local:/etc/bind/named.conf.local
+      - ./dns/db.lab.local:/etc/bind/db.lab.local
+      - dns-data:/var/cache/bind
+    dns:
+      - 172.20.0.2  # Usa su propia IP como resolvedor
+    restart: unless-stopped
+
+  # Gateway NAT para acceso a internet externo
+  nat:
+    image: ubuntu:latest
+    container_name: nat
+    network_mode: host  # Usa red del host para salida externa
+    volumes:
+      - ./nat/nat_setup.sh:/nat_setup.sh
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_MODULE  # Necesario para modificar /proc/sys/
+    command: bash -c "/nat_setup.sh"
+    restart: unless-stopped
+
+
+  # Servidor DHCP para asignar direcciones IP
+  dhcp:
+    image: networkboot/dhcpd:latest
+    container_name: dhcp
+    networks:
+      lab-net:
+        ipv4_address: 172.20.0.3
+    volumes:
+      - ./dhcp/dhcpd.conf:/data/dhcpd.conf
+      - dhcp-data:/var/lib/dhcp
+    cap_add:
+      - NET_ADMIN
+    command: eth0  # Verifica la interfaz con 'docker exec dhcp ip a'
+    restart: unless-stopped
+    dns:
+      - 172.20.0.2
+    depends_on:
+      - dns
+
+  # Aplicación web Flask
+  flask-app:
+    build:
+      context: ./flask-app
+    container_name: flask
+    networks:
+      lab-net:
+        ipv4_address: 172.20.0.5
+    ports:
+      - "5000:5000"  # Expuesto para pruebas directas
+    dns:
+      - 172.20.0.2
+    restart: unless-stopped
+    depends_on:
+      - dns
+
+  # Reverse Proxy Nginx con SSL
+  nginx:
+    build:
+      context: ./nginx
+    container_name: nginx
+    networks:
+      lab-net:
+        ipv4_address: 172.20.0.6
+    ports:
+      - "443:443"
+    dns:
+      - 172.20.0.2
+    restart: unless-stopped
+    depends_on:
+      - flask-app
+      - dns
+
+  # Contenedor cliente para pruebas
+  #client:
+   # image: alpine:latest
+    #container_name: client
+    #networks:
+     # lab-net:
+      #  ipv4_address: 172.20.0.100  # IP fija fuera del rango DHCP
+    #dns:
+     # - 172.20.0.2  # Usa el servidor DNS
+    #command: sh -c "apk add bind-tools iputils && tail -f /dev/null"  # Instala herramientas y mantiene el contenedor activo
+    #restart: unless-stopped
+    #depends_on:
+     # - dns
+
+
+  client:
+    image: alpine:latest
+    container_name: client
+    networks:
+      lab-net:
+        # ipv4_address: 172.20.0.100  # Comentado para DHCP
+    dns:
+      - 172.20.0.2
+    command: sh -c "echo 'nameserver 172.20.0.2' > /etc/resolv.conf && apk add bind-tools iputils curl && udhcpc -i eth0 && tail -f /dev/null"
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    depends_on:
+      - dns
+      - dhcp
